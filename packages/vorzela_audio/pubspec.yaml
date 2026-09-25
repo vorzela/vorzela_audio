@@ -1,0 +1,32 @@
+name: vorzela_audio
+description: Low-memory HLS and progressive audio for Flutter (Media3 ExoPlayer / AVPlayer).
+version: 0.2.0
+publish_to: none
+homepage: https://github.com/vorzela/vorzela_audio
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  vorzela_audio_platform_interface:
+    path: ../vorzela_audio_platform_interface
+  vorzela_audio_android:
+    path: ../vorzela_audio_android
+  vorzela_audio_ios:
+    path: ../vorzela_audio_ios
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        default_package: vorzela_audio_android
+      ios:
+        default_package: vorzela_audio_ios

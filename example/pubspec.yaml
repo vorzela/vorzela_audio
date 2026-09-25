@@ -1,0 +1,16 @@
+name: vorzela_audio_example
+description: Demonstrates vorzela_audio playlist + visualizer chrome.
+publish_to: none
+
+environment:
+  sdk: ^3.3.0
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  vorzela_audio:
+    path: ../packages/vorzela_audio
+
+flutter:
+  uses-material-design: true

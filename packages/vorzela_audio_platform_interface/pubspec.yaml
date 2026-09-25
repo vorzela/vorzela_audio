@@ -1,0 +1,18 @@
+name: vorzela_audio_platform_interface
+description: Platform interface for vorzela_audio (HLS / progressive via Media3 / AVPlayer).
+version: 0.2.0
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
