@@ -179,11 +179,66 @@ playlist.onSkipNext = () => analytics.log('skip_next');
 
 ## Memory contract
 
-1. **One native player per controller** — `load()` disposes any previous player before creating a new one.
-2. **Explicit dispose** — `dispose()` / `disposePlayer()` must run when the widget or session ends; native ExoPlayer / AVPlayer instances are not GC-managed.
-3. **Tight buffering (Android)** — `DefaultLoadControl` uses **2s** min / **10s** max buffer, **500ms** playback start, **1000ms** after rebuffer (matches vorzela video tuning).
-4. **Position events** — native emits at most ~**4/s** per player (`kPositionEventThrottleMs == 250`).
-5. **No video pipeline** — no Surface, Texture, or decode-to-texture RAM for video frames.
+1. **One native player per controller** — `load()` disposes any previous player before creating a new one. Overlapping loads are generation-guarded (orphans disposed).
+2. **Explicit dispose** — Prefer `await disposePlayer()` before dropping references; `dispose()` still schedules teardown.
+3. **Tight buffering (Android)** — `DefaultLoadControl` uses **2s** min / **10s** max buffer, **500ms** playback start, **1000ms** after rebuffer.
+4. **Position events** — at most ~**4/s** (`kPositionEventThrottleMs == 250`).
+5. **No video pipeline** — no Surface / Texture RAM.
+
+---
+
+## API reference
+
+### Controllers
+
+| API | When |
+|-----|------|
+| `VorzelaAudioController({platform?})` | One long-form stream / podcast / song engine |
+| `load(uri, {autoPlay, fastStart})` | Start or replace media (`https` / `file` / `asset`; **http rejected**) |
+| `play` / `pause` / `seek` / `setVolume` | Transport |
+| `enableBackground(bool)` | Lock-screen / notification / FGS — call before or after load (re-applied on load) |
+| `enableSpectrum(bool)` | Drive `VorzelaAudioVisualizer` / wave seek |
+| `syncNowPlaying({title, artist})` | Update MediaSession / MPNowPlaying metadata |
+| `disposePlayer()` / `dispose()` | Leave screen / tear down |
+| Fields: `isReady`, `isPlaying`, `isBuffering`, `position`, `duration`, `buffered`, `error`, `spectrum`, `backgroundEnabled` | Bind with `ListenableBuilder` |
+| `onRemoteAction` / `onTrackCompleted` | Hooks; playlist sets these |
+
+| API | When |
+|-----|------|
+| `VorzelaPlaylistController({audio?})` | Queue of tracks on **one** controller |
+| `setQueue(items, {startIndex})` | Replace queue |
+| `playAt` / `playIndex` / `next` / `previous` | Navigation (mutex vs auto-advance) |
+| `repeatMode` (`off` / `one` / `all`) / `shuffle` | Loop / shuffle |
+| `items` / `current` / `currentIndex` / `audio` | State |
+| `onSkipNext` / `onSkipPrevious` | Analytics hooks |
+| `dispose()` | Disposes owned audio controller |
+
+| API | When |
+|-----|------|
+| `VorzelaMediaItem({uri, title?, artist?})` | Playlist entry |
+| `VorzelaRepeatMode` | `off`, `one`, `all` |
+| `VorzelaSoundPool` → `load` / `play` / `dispose` | Short overlapping SFX only |
+| `VorzelaAudioSpectrum({bass, mid, high, bands?})` | Latest visualizer sample |
+
+### Widgets
+
+| API | When |
+|-----|------|
+| `VorzelaAudioPlayerChrome` | Default chrome shell (visualizer + seek + time); replace pieces via your own `Stack` |
+| `VorzelaAudioVisualizer` | Bass/mid/high bars while spectrum enabled |
+| `VorzelaAudioSeekBar` | Linear scrubber |
+| `VorzelaWaveSeekBar` | Band envelope + scrubber; falls back to linear seek |
+| `VorzelaAudioTimeLabel` | `mm:ss` clock |
+| `VorzelaPlaylistList` | Simple tappable queue list |
+
+### Events (platform interface)
+
+| Type | When |
+|------|------|
+| `AudioSpectrumEvent` | ~50ms band levels |
+| `AudioFocusLostEvent` / `AudioFocusGainedEvent` | Other apps took / returned audio focus |
+| `AudioRemoteActionEvent` | Notification / lock-screen play/pause/seek/next/prev |
+| `kPositionEventThrottleMs` | `250` |
 
 ---
 

@@ -19,6 +19,7 @@ class VorzelaAudioController extends ChangeNotifier {
   final VorzelaAudioPlatform _platform;
 
   int? _playerId;
+  int _loadGeneration = 0;
   bool isReady = false;
   bool isBuffering = false;
   bool isPlaying = false;
@@ -55,14 +56,22 @@ class VorzelaAudioController extends ChangeNotifier {
     }
 
     await disposePlayer();
+    final generation = _loadGeneration;
     error = null;
     isReady = false;
     spectrum = null;
     notifyListeners();
 
     final id = await _platform.create();
+    if (generation != _loadGeneration) {
+      await _platform.disposePlayer(id);
+      return;
+    }
     _playerId = id;
-    _events = _platform.eventsFor(id).listen(_onEvent);
+    final listenPlayerId = id;
+    _events = _platform.eventsFor(id).listen(
+          (event) => _onEvent(event, generation, listenPlayerId),
+        );
 
     try {
       await _platform.load(
@@ -71,6 +80,7 @@ class VorzelaAudioController extends ChangeNotifier {
         autoPlay: autoPlay,
         fastStart: fastStart,
       );
+      if (generation != _loadGeneration) return;
       if (autoPlay) isPlaying = true;
       await _platform.setVolume(id, volume.clamp(0.0, 1.0));
       if (backgroundEnabled) {
@@ -80,16 +90,25 @@ class VorzelaAudioController extends ChangeNotifier {
         await _platform.enableSpectrum(id, enabled: true);
       }
     } on PlatformException catch (e) {
+      if (generation != _loadGeneration) return;
       error = '${e.code}: ${e.message ?? e.details}';
       isPlaying = false;
+      await disposePlayer();
     } catch (e) {
+      if (generation != _loadGeneration) return;
       error = '$e';
       isPlaying = false;
+      await disposePlayer();
     }
-    notifyListeners();
+    if (generation == _loadGeneration) notifyListeners();
   }
 
-  void _onEvent(AudioEvent event) {
+  void _onEvent(AudioEvent event, int generation, int listenPlayerId) {
+    if (generation != _loadGeneration ||
+        _playerId == null ||
+        _playerId != listenPlayerId) {
+      return;
+    }
     switch (event) {
       case AudioReadyEvent(:final durationMs):
         duration = Duration(milliseconds: durationMs);
@@ -193,6 +212,7 @@ class VorzelaAudioController extends ChangeNotifier {
   }
 
   Future<void> disposePlayer() async {
+    _loadGeneration++;
     await _events?.cancel();
     _events = null;
     final id = _playerId;

@@ -26,6 +26,7 @@ class VorzelaPlaylistController extends ChangeNotifier {
   VorzelaRepeatMode repeatMode = VorzelaRepeatMode.off;
   bool _shuffle = false;
   bool _advancing = false;
+  bool _navigating = false;
 
   VoidCallback? onSkipNext;
   VoidCallback? onSkipPrevious;
@@ -82,41 +83,55 @@ class VorzelaPlaylistController extends ChangeNotifier {
   Future<void> playIndex(int index, {bool autoPlay = true}) =>
       playAt(index, autoPlay: autoPlay);
 
-  Future<void> next({bool autoPlay = true}) async {
-    onSkipNext?.call();
-    if (_items.isEmpty) return;
-    if (_orderIndex < _order.length - 1) {
-      _orderIndex++;
-      notifyListeners();
-      await _loadCurrent(autoPlay: autoPlay);
-      return;
-    }
-    if (repeatMode == VorzelaRepeatMode.all) {
-      _orderIndex = 0;
-      notifyListeners();
-      await _loadCurrent(autoPlay: autoPlay);
+  Future<void> next({bool autoPlay = true, bool fromAutoAdvance = false}) async {
+    if (_navigating) return;
+    if (!fromAutoAdvance && _advancing) return;
+    _navigating = true;
+    try {
+      onSkipNext?.call();
+      if (_items.isEmpty) return;
+      if (_orderIndex < _order.length - 1) {
+        _orderIndex++;
+        notifyListeners();
+        await _loadCurrent(autoPlay: autoPlay);
+        return;
+      }
+      if (repeatMode == VorzelaRepeatMode.all) {
+        _orderIndex = 0;
+        notifyListeners();
+        await _loadCurrent(autoPlay: autoPlay);
+      }
+    } finally {
+      _navigating = false;
     }
   }
 
-  Future<void> previous({bool autoPlay = true}) async {
-    onSkipPrevious?.call();
-    if (_items.isEmpty) return;
-    if (audio.position > const Duration(seconds: 3)) {
-      await audio.seek(Duration.zero);
-      return;
-    }
-    if (_orderIndex > 0) {
-      _orderIndex--;
-      notifyListeners();
-      await _loadCurrent(autoPlay: autoPlay);
-      return;
-    }
-    if (repeatMode == VorzelaRepeatMode.all) {
-      _orderIndex = _order.length - 1;
-      notifyListeners();
-      await _loadCurrent(autoPlay: autoPlay);
-    } else {
-      await audio.seek(Duration.zero);
+  Future<void> previous({bool autoPlay = true, bool fromAutoAdvance = false}) async {
+    if (_navigating) return;
+    if (!fromAutoAdvance && _advancing) return;
+    _navigating = true;
+    try {
+      onSkipPrevious?.call();
+      if (_items.isEmpty) return;
+      if (audio.position > const Duration(seconds: 3)) {
+        await audio.seek(Duration.zero);
+        return;
+      }
+      if (_orderIndex > 0) {
+        _orderIndex--;
+        notifyListeners();
+        await _loadCurrent(autoPlay: autoPlay);
+        return;
+      }
+      if (repeatMode == VorzelaRepeatMode.all) {
+        _orderIndex = _order.length - 1;
+        notifyListeners();
+        await _loadCurrent(autoPlay: autoPlay);
+      } else {
+        await audio.seek(Duration.zero);
+      }
+    } finally {
+      _navigating = false;
     }
   }
 
@@ -151,7 +166,7 @@ class VorzelaPlaylistController extends ChangeNotifier {
   }
 
   Future<void> _onTrackCompleted() async {
-    if (_advancing) return;
+    if (_advancing || _navigating) return;
     _advancing = true;
     try {
       switch (repeatMode) {
@@ -159,10 +174,10 @@ class VorzelaPlaylistController extends ChangeNotifier {
           await audio.seek(Duration.zero);
           await audio.play();
         case VorzelaRepeatMode.all:
-          await next(autoPlay: true);
+          await next(autoPlay: true, fromAutoAdvance: true);
         case VorzelaRepeatMode.off:
           if (_orderIndex < _order.length - 1) {
-            await next(autoPlay: true);
+            await next(autoPlay: true, fromAutoAdvance: true);
           }
       }
     } finally {
