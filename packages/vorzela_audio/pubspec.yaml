@@ -1,6 +1,6 @@
 name: vorzela_audio
 description: Low-memory HLS and progressive audio for Flutter (Media3 ExoPlayer / AVPlayer).
-version: 0.2.0
+version: 0.2.1
 publish_to: none
 homepage: https://github.com/vorzela/vorzela_audio
 

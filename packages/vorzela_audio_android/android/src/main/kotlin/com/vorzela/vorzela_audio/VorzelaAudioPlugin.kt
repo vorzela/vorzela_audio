@@ -251,33 +251,46 @@ private class PlayerSession(
   private val tickRunnable = object : Runnable {
     override fun run() {
       if (released) return
-      if (player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED) {
-        val now = System.currentTimeMillis()
-        if (now - lastPositionEmit >= 250) {
-          lastPositionEmit = now
-          val buffered = player.bufferedPosition.coerceAtLeast(0)
-          emit(
-            mapOf(
-              "type" to "position",
-              "playerId" to id,
-              "positionMs" to player.currentPosition,
-              "bufferedMs" to buffered,
-            ),
-          )
-          updatePlaybackState()
-        }
-        if (spectrumEnabled && visualizer == null) {
-          emitZeroSpectrum()
-        }
+      val active =
+        player.playbackState != Player.STATE_IDLE &&
+          player.playbackState != Player.STATE_ENDED
+      if (!active) {
+        // Stop polling while idle/ended — restarted by [ensureTicking] on load/play.
+        return
       }
-      handler.postDelayed(this, 50)
+      val now = System.currentTimeMillis()
+      if (now - lastPositionEmit >= 250) {
+        lastPositionEmit = now
+        val buffered = player.bufferedPosition.coerceAtLeast(0)
+        emit(
+          mapOf(
+            "type" to "position",
+            "playerId" to id,
+            "positionMs" to player.currentPosition,
+            "bufferedMs" to buffered,
+          ),
+        )
+        updatePlaybackState()
+      }
+      if (spectrumEnabled && visualizer == null) {
+        emitZeroSpectrum()
+      }
+      // Position is static while paused; avoid a 50ms busy-loop.
+      val nextDelay = if (player.isPlaying) 50L else 500L
+      handler.postDelayed(this, nextDelay)
     }
+  }
+
+  private fun ensureTicking() {
+    if (released) return
+    handler.removeCallbacks(tickRunnable)
+    handler.post(tickRunnable)
   }
 
   init {
     player.addListener(this)
     ensureNotificationChannel()
-    handler.post(tickRunnable)
+    ensureTicking()
   }
 
   fun load(uri: String, autoPlay: Boolean, fastStart: Boolean) {
@@ -297,6 +310,7 @@ private class PlayerSession(
     player.prepare()
     player.playWhenReady = autoPlay
     if (autoPlay) requestAudioFocus()
+    ensureTicking()
     handler.postDelayed({ maybeAttachVisualizer() }, 300)
   }
 
@@ -304,6 +318,7 @@ private class PlayerSession(
     requestAudioFocus()
     player.playWhenReady = true
     player.play()
+    ensureTicking()
     updatePlaybackState()
     refreshNotification()
   }
@@ -690,12 +705,13 @@ private class SfxPool(private val context: Context) {
 
   private val sampleIds = ConcurrentHashMap<String, Int>()
   private val oneShotPlayers = ConcurrentHashMap<String, ExoPlayer>()
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   fun load(uri: String) {
-    if (sampleIds.containsKey(uri)) return
+    if (sampleIds.containsKey(uri) || oneShotPlayers.containsKey(uri)) return
     when (Uri.parse(uri).scheme?.lowercase()) {
       "https" -> {
-        oneShotPlayers[uri] = ExoPlayer.Builder(context).build()
+        oneShotPlayers[uri] = createOneShotPlayer(uri)
       }
       "file", "asset" -> {
         val sampleId = when (Uri.parse(uri).scheme?.lowercase()) {
@@ -706,8 +722,9 @@ private class SfxPool(private val context: Context) {
           else -> {
             val assetPath = uri.removePrefix("asset://").trimStart('/')
             val key = FlutterInjector.instance().flutterLoader().getLookupKeyForAsset(assetPath)
-            val afd = context.assets.openFd(key)
-            pool.load(afd, 1)
+            // SoundPool.load(AssetFileDescriptor, ...) dup()s the underlying fd
+            // internally, so close our copy right after or we leak one fd per SFX.
+            context.assets.openFd(key).use { afd -> pool.load(afd, 1) }
           }
         }
         if (sampleId == 0) throw IllegalStateException("SoundPool load failed for $uri")
@@ -720,9 +737,7 @@ private class SfxPool(private val context: Context) {
   fun play(uri: String, volume: Float) {
     val scheme = Uri.parse(uri).scheme?.lowercase()
     if (scheme == "https") {
-      val player = oneShotPlayers.getOrPut(uri) {
-        ExoPlayer.Builder(context).build()
-      }
+      val player = oneShotPlayers.getOrPut(uri) { createOneShotPlayer(uri) }
       val mediaUri = Uri.parse(uri)
       player.setMediaItem(MediaItem.fromUri(mediaUri))
       player.volume = volume.coerceIn(0f, 1f)
@@ -735,6 +750,29 @@ private class SfxPool(private val context: Context) {
       sampleIds[uri]!!
     }
     pool.play(sampleId, volume.coerceIn(0f, 1f), volume.coerceIn(0f, 1f), 1, 0, 1f)
+  }
+
+  private fun createOneShotPlayer(uri: String): ExoPlayer {
+    return ExoPlayer.Builder(context).build().apply {
+      addListener(
+        object : Player.Listener {
+          override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) {
+              // Never release ExoPlayer from inside its own listener callback.
+              mainHandler.post { releaseOneShot(uri) }
+            }
+          }
+
+          override fun onPlayerError(error: PlaybackException) {
+            mainHandler.post { releaseOneShot(uri) }
+          }
+        },
+      )
+    }
+  }
+
+  private fun releaseOneShot(uri: String) {
+    oneShotPlayers.remove(uri)?.release()
   }
 
   fun release() {

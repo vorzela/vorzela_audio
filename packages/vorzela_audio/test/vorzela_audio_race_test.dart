@@ -169,4 +169,20 @@ void main() {
       await c.close();
     }
   });
+
+  test('late native event after dispose does not throw', () async {
+    final fake = SlowFakeAudioPlatform();
+    final c = VorzelaAudioController(platform: fake);
+    await c.load('https://example.com/a.mp3');
+    final id = c.playerId!;
+    c.dispose();
+    // Event arrives after ChangeNotifier.dispose but before/during cancel.
+    fake._eventsByPlayer[id]?.add(
+      const AudioPositionEvent(positionMs: 1000, bufferedMs: 2000),
+    );
+    await Future<void>.delayed(Duration.zero);
+    for (final c in fake._eventsByPlayer.values) {
+      await c.close();
+    }
+  });
 }

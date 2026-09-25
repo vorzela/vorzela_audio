@@ -446,9 +446,17 @@ private final class PlayerSession: NSObject {
   }
 }
 
-private final class SfxPool {
+private final class SfxPool: NSObject, AVAudioPlayerDelegate {
   private weak var registrar: FlutterPluginRegistrar?
   private var cachedFiles: [String: URL] = [:]
+
+  // Playback objects MUST be retained for the duration of playback, or ARC
+  // deallocates them the instant `play()` returns and the sound is cut off.
+  // Keyed by a monotonic token so overlapping one-shots don't collide.
+  private var activeAVPlayers: [Int: AVPlayer] = [:]
+  private var activeAudioPlayers: [Int: AVAudioPlayer] = [:]
+  private var nextToken = 0
+  private var endObservers: [Int: [NSObjectProtocol]] = [:]
 
   init(registrar: FlutterPluginRegistrar) {
     self.registrar = registrar
@@ -468,20 +476,75 @@ private final class SfxPool {
       cachedFiles[uri] = url
     }
     if url.scheme?.lowercased() == "https" {
+      let token = nextToken
+      nextToken += 1
       let item = AVPlayerItem(url: url)
       let player = AVPlayer(playerItem: item)
       player.volume = max(0, min(1, volume))
+      activeAVPlayers[token] = player
+      let endObserver = NotificationCenter.default.addObserver(
+        forName: .AVPlayerItemDidPlayToEndTime,
+        object: item,
+        queue: .main
+      ) { [weak self] _ in
+        self?.finishAVPlayer(token: token)
+      }
+      let failObserver = NotificationCenter.default.addObserver(
+        forName: .AVPlayerItemFailedToPlayToEndTime,
+        object: item,
+        queue: .main
+      ) { [weak self] _ in
+        self?.finishAVPlayer(token: token)
+      }
+      endObservers[token] = [endObserver, failObserver]
       player.play()
       return
     }
+    let token = nextToken
+    nextToken += 1
     let player = try AVAudioPlayer(contentsOf: url)
     player.volume = max(0, min(1, volume))
+    player.delegate = self
     player.prepareToPlay()
-    player.play()
+    activeAudioPlayers[token] = player
+    if !player.play() {
+      activeAudioPlayers.removeValue(forKey: token)
+    }
+  }
+
+  private func finishAVPlayer(token: Int) {
+    if let observers = endObservers.removeValue(forKey: token) {
+      for observer in observers {
+        NotificationCenter.default.removeObserver(observer)
+      }
+    }
+    activeAVPlayers.removeValue(forKey: token)
+  }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    if let token = activeAudioPlayers.first(where: { $0.value === player })?.key {
+      activeAudioPlayers.removeValue(forKey: token)
+    }
+  }
+
+  func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+    if let token = activeAudioPlayers.first(where: { $0.value === player })?.key {
+      activeAudioPlayers.removeValue(forKey: token)
+    }
   }
 
   func release() {
     cachedFiles.removeAll()
+    for player in activeAVPlayers.values { player.pause() }
+    activeAVPlayers.removeAll()
+    for observers in endObservers.values {
+      for observer in observers {
+        NotificationCenter.default.removeObserver(observer)
+      }
+    }
+    endObservers.removeAll()
+    for player in activeAudioPlayers.values { player.stop() }
+    activeAudioPlayers.removeAll()
   }
 
   private func resolveLocalURL(uri: String) throws -> URL {

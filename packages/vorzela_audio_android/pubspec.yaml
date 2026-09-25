@@ -1,6 +1,6 @@
 name: vorzela_audio_android
 description: Android Media3 ExoPlayer implementation for vorzela_audio.
-version: 0.2.0
+version: 0.2.1
 publish_to: none
 
 environment:

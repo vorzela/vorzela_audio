@@ -1,6 +1,6 @@
 name: vorzela_audio_platform_interface
 description: Platform interface for vorzela_audio (HLS / progressive via Media3 / AVPlayer).
-version: 0.2.0
+version: 0.2.1
 publish_to: none
 
 environment:
